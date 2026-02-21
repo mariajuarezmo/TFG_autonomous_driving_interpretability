@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtual envs (por si hay alguno dentro)
+venv/
+.env/
+.venv/
+pytorch_env/
+*.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Torch / datasets / weights (ajusta según tu proyecto)
+runs/
+wandb/
+data/
+datasets/
+*.pt
+*.pth
+*.onnx
+
+# Cache
+.cache/
