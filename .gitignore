@@ -39,3 +39,9 @@ datasets/
 
 # Cache
 .cache/
+
+#Carpetas
+videos/
+jsons_finales
+pilotnet_datasets/
+pilotnet_processed/
