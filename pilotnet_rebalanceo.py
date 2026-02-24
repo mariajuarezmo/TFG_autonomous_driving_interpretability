@@ -14,9 +14,9 @@ from collections import Counter
 torch.manual_seed(626)
 processed_data_dir = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_processed"
 
-DATA_FILE = "processed_data_v3.pt" 
+DATA_FILE = "processed_data.pt" 
 
-num_epochs = 30
+num_epochs = 40
 batch_size = 64
 learning_rate = 1e-3
 weight_decay = 1e-5
@@ -25,7 +25,8 @@ DEBUG = False
 
 # Parámetros de rebalanceo
 REBALANCE = True  # Activar/desactivar rebalanceo
-ESQUIVA_WEIGHT = 3.0  # Peso para muestras de esquiva (1.0 = peso normal)
+ESQUIVA_WEIGHT_POS = 5.0
+ESQUIVA_WEIGHT_NEG = 3.0
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print("=" * 70)
@@ -34,7 +35,8 @@ print("=" * 70)
 print(f"Dispositivo: {device}")
 print(f"Archivo de datos: {DATA_FILE}")
 print(f"Rebalanceo activado: {REBALANCE}")
-print(f"Peso esquiva: {ESQUIVA_WEIGHT}x")
+print(f"Peso esquiva positiva: {ESQUIVA_WEIGHT_POS}x")
+print(f"Peso esquiva negativa: {ESQUIVA_WEIGHT_NEG}x")
 
 
 # FUNCIONES DE DESNORMALIZACIÓN
@@ -181,14 +183,16 @@ print("\n[3/7] Creando pesos para rebalanceo...")
 if REBALANCE:
     # Calcular pesos para cada muestra
     sample_weights = torch.ones(num_samples)
-    
+    esquiva_pos_mask = torques_real >= ESQUIVA_THRESHOLD
+    esquiva_neg_mask = torques_real <= -ESQUIVA_THRESHOLD
     # Asignar mayor peso a muestras de esquiva
-    sample_weights[esquiva_mask] = ESQUIVA_WEIGHT
-    
+    sample_weights[esquiva_pos_mask] = ESQUIVA_WEIGHT_POS
+    sample_weights[esquiva_neg_mask] = ESQUIVA_WEIGHT_NEG
     # Asegurar que los pesos sumen al tamaño del dataset
     sample_weights = sample_weights * (num_samples / sample_weights.sum())
     
-    print(f"    Peso para esquivas: {ESQUIVA_WEIGHT:.1f}x")
+    print(f"    Peso esquivas positivas: {ESQUIVA_WEIGHT_POS:.1f}x")
+    print(f"    Peso esquivas negativas: {ESQUIVA_WEIGHT_NEG:.1f}x")
     print(f"    Peso normalizado promedio: {sample_weights.mean():.3f}")
     print(f"    Peso para esquivas (promedio): {sample_weights[esquiva_mask].mean():.3f}")
     print(f"    Peso para no esquivas (promedio): {sample_weights[no_esquiva_mask].mean():.3f}")
@@ -308,14 +312,16 @@ def calcular_metricas(preds_norm, reales_norm):
     mae_torque = torch.mean(torch.abs(preds_torque - reales_torque)).item()
     
     # Error relativo
-    epsilon = 1e-6
-    den = torch.clamp(torch.abs(reales_torque), min=TORQUE_EPS)  # p.ej TORQUE_EPS = 5.0
+    den = torch.clamp(torch.abs(reales_torque), min=TORQUE_EPS)  #TORQUE_EPS = 5.0
     error_rel = torch.abs(preds_torque - reales_torque) / den
     er_mean = (error_rel * 100).mean().item()
     er_median = (error_rel * 100).median().item()
 
     # Métricas específicas para esquivas
     esquiva_mask = torch.abs(reales_torque) >= ESQUIVA_THRESHOLD
+    esquiva_pos_mask = reales_torque >= ESQUIVA_THRESHOLD
+    esquiva_neg_mask = reales_torque <= -ESQUIVA_THRESHOLD
+
     if esquiva_mask.sum() > 0:
         mae_esquiva = torch.abs(preds_torque[esquiva_mask] - reales_torque[esquiva_mask]).mean().item()
         signo_correcto_esquiva = ((preds_torque[esquiva_mask] > 0) == (reales_torque[esquiva_mask] > 0)).sum().item()
@@ -323,6 +329,16 @@ def calcular_metricas(preds_norm, reales_norm):
     else:
         mae_esquiva = 0.0
         porcentaje_signo_esquiva = 0.0
+
+    if esquiva_pos_mask.sum() > 0:
+        mae_esquiva_pos = torch.abs(preds_torque[esquiva_pos_mask] - reales_torque[esquiva_pos_mask]).mean().item()
+    else:
+        mae_esquiva_pos = 0.0
+
+    if esquiva_neg_mask.sum() > 0:
+        mae_esquiva_neg = torch.abs(preds_torque[esquiva_neg_mask] - reales_torque[esquiva_neg_mask]).mean().item()
+    else:
+        mae_esquiva_neg = 0.0
     
     return {
         'mse_norm': mse_norm,
@@ -332,7 +348,9 @@ def calcular_metricas(preds_norm, reales_norm):
         'er_median': er_median,
         'rmse_torque': np.sqrt(mse_torque),
         'mae_esquiva': mae_esquiva,
-        'porcentaje_signo_esquiva': porcentaje_signo_esquiva
+        'porcentaje_signo_esquiva': porcentaje_signo_esquiva,
+        'mae_esquiva_pos': mae_esquiva_pos,
+        'mae_esquiva_neg': mae_esquiva_neg,
     }
 
 
@@ -365,10 +383,36 @@ test_loader = DataLoader(
     shuffle=False
 )
 
-criterion = nn.MSELoss()
+# Calcular umbral en escala normalizada
+if normalization_params is not None and normalization_params.get('method') == 'minmax_symmetric':
+    esquiva_threshold_norm = (ESQUIVA_THRESHOLD - normalization_params['min_torque']) / normalization_params['range'] * 2 - 1
+else:
+    esquiva_threshold_norm = ESQUIVA_THRESHOLD / max_torque_ref
+
+class EsquivaWeightedLoss(nn.Module):
+    def __init__(self, threshold_norm, weight_pos=5.0, weight_neg=3.0):
+        super().__init__()
+        self.threshold = threshold_norm
+        self.weight_pos = weight_pos
+        self.weight_neg = weight_neg
+
+    def forward(self, preds, targets):
+        errors = (preds - targets) ** 2
+        weights = torch.ones_like(targets)
+        weights[targets >= self.threshold]  = self.weight_pos
+        weights[targets <= -self.threshold] = self.weight_neg
+        return (weights * errors).mean()
+    
+criterion = EsquivaWeightedLoss(
+    threshold_norm=esquiva_threshold_norm,
+    weight_pos=ESQUIVA_WEIGHT_POS,
+    weight_neg=ESQUIVA_WEIGHT_NEG
+)
+
+# AÑADIR AQUÍ:
 optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode='min', factor=0.5, patience=5
+    optimizer, mode='min', factor=0.5, patience=10
 )
 
 print(f" Configuración lista")
@@ -455,17 +499,20 @@ for epoch in range(num_epochs):
             'data_file': DATA_FILE,
             'rebalanceo': {
                 'threshold': ESQUIVA_THRESHOLD,
-                'weight': ESQUIVA_WEIGHT
+                'weight_pos': ESQUIVA_WEIGHT_POS,
+                'weight_neg': ESQUIVA_WEIGHT_NEG
             }
         }, "pilotnet_rebalanceo_weights.pth")
     
     # Mostrar progreso
     if (epoch + 1) % 5 == 0 or epoch == 0 or epoch == num_epochs - 1:
         print(f"Epoch {epoch+1:3d}/{num_epochs} | "
-              f"Loss: {test_loss_norm:.6f} | "
-              f"MAE: {test_metrics['mae_torque']:6.2f} | "
-              f"ER_median: {test_metrics['er_median']:.1f}% | "
-              f"MAE_esq: {test_metrics['mae_esquiva']:6.2f}")
+            f"Loss: {test_loss_norm:.6f} | "
+            f"MAE: {test_metrics['mae_torque']:6.2f} | "
+            f"ER_median: {test_metrics['er_median']:.1f}% | "
+            f"MAE_esq: {test_metrics['mae_esquiva']:6.2f} | "
+            f"MAE_pos: {test_metrics['mae_esquiva_pos']:6.2f} | "
+            f"MAE_neg: {test_metrics['mae_esquiva_neg']:6.2f}")
 
 print("-" * 70)
 print(f" Mejor modelo en época {best_epoch}")
@@ -615,7 +662,7 @@ Parámetros Rebalanceo:
 -------------------
 Activado: {REBALANCE}
 Umbral: {ESQUIVA_THRESHOLD}
-Peso: {ESQUIVA_WEIGHT}x
+Peso pos: {ESQUIVA_WEIGHT_POS}x / neg: {ESQUIVA_WEIGHT_NEG}x
 
 Best Epoch: {best_epoch}"""
 ax12.text(0.1, 0.5, textstr, fontsize=10, verticalalignment='center',
@@ -634,7 +681,8 @@ torch.save({
     'rebalance_params': {
         'enabled': REBALANCE,
         'threshold': ESQUIVA_THRESHOLD,
-        'weight': ESQUIVA_WEIGHT
+        'weight_pos': ESQUIVA_WEIGHT_POS,
+        'weight_neg': ESQUIVA_WEIGHT_NEG
     },
     'train_losses': train_losses_norm,
     'test_losses': test_losses_norm,
@@ -655,4 +703,6 @@ print(f"ER final: {final_metrics['er_mean']:.2f}%")
 print(f"MAE total: {final_metrics['mae_torque']:.2f}")
 print(f"MAE esquivas: {final_metrics['mae_esquiva']:.2f}")
 print(f"Signo correcto esquivas: {final_metrics['porcentaje_signo_esquiva']:.1f}%")
+print(f"MAE esquivas positivas:  {final_metrics['mae_esquiva_pos']:.2f}")
+print(f"MAE esquivas negativas:  {final_metrics['mae_esquiva_neg']:.2f}")
 print("=" * 70)

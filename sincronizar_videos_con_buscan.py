@@ -8,7 +8,7 @@ videos_dir = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\videos"
 csvs_dir = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\jsons_finales\csvs"
 output_root = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_datasets"
 fps_default = 20
-tolerance_sec = 0.5  # tolerancia para merge_asof (medio segundo)
+tolerance_sec = 0.1  # tolerancia para merge_asof (medio segundo)
 
 os.makedirs(output_root, exist_ok=True)
 
@@ -30,6 +30,9 @@ def procesar_video(video_path, carstate_csv):
     fps = cap.get(cv2.CAP_PROP_FPS)
     if np.isnan(fps) or fps <= 0:
         fps = fps_default
+        print(f"  FPS no detectado, usando valor por defecto: {fps_default}")
+    else:
+        print(f"  FPS detectado: {fps:.2f}")
 
     out_dir = os.path.join(output_root, base_name)
     os.makedirs(out_dir, exist_ok=True)
@@ -63,6 +66,11 @@ def procesar_video(video_path, carstate_csv):
         tolerance=tolerance_sec
     )
 
+    porcentaje_valido = df_sync["steeringTorque"].notna().mean() * 100
+    if porcentaje_valido < 50:
+        print(f"  ADVERTENCIA: solo el {porcentaje_valido:.1f}% de frames tienen torque.")
+        print(f"  Verifica que el vídeo y el CSV corresponden al mismo momento.")
+
     # 4. Guardar data.txt 
     data_txt_path = os.path.join(out_dir, "data.txt")
     with open(data_txt_path, "w") as f:
@@ -70,6 +78,10 @@ def procesar_video(video_path, carstate_csv):
             if pd.notna(row["steeringTorque"]):
                 f.write(f"{row['filename']} {row['steeringTorque']}\n")
 
+    frames_con_torque = df_sync["steeringTorque"].notna().sum()
+    frames_sin_torque = df_sync["steeringTorque"].isna().sum()
+    print(f"  → Frames con torque: {frames_con_torque}")
+    print(f"  → Frames descartados (sin torque): {frames_sin_torque}")
     print(f"Dataset listo: {out_dir}\n")
 
 

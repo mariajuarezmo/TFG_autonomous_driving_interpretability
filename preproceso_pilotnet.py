@@ -54,6 +54,22 @@ print(f"   ✓ Total de imágenes encontradas: {len(all_images)}")
 print("\n[2/4] Analizando distribución de torques...")
 torques_tensor = torch.tensor(all_torques, dtype=torch.float32)
 
+print(f"Valor mínimo exacto: {torques_tensor.min().item()}")
+print(f"Valor máximo exacto: {torques_tensor.max().item()}")
+
+# Buscar en qué archivo y línea está el valor mínimo y máximo
+idx_min = torch.argmin(torques_tensor).item()
+idx_max = torch.argmax(torques_tensor).item()
+
+print(f"El torque mínimo ({torques_tensor.min().item()}) está en:")
+print(f"   Imagen: {all_images[idx_min]}")
+print(f"   Torque: {all_torques[idx_min]}")
+
+print(f"El torque máximo ({torques_tensor.max().item()}) está en:")
+print(f"   Imagen: {all_images[idx_max]}")
+print(f"   Torque: {all_torques[idx_max]}")
+
+
 min_torque = torques_tensor.min().item()
 max_torque = torques_tensor.max().item()
 mean_torque = torques_tensor.mean().item()
@@ -141,7 +157,7 @@ data_to_save = {
     'num_samples': len(all_images)
 }
 
-output_file = os.path.join(output_dir, "processed_data_v3.pt")
+output_file = os.path.join(output_dir, "processed_data.pt")
 torch.save(data_to_save, output_file)
 
 print(f"\n Datos guardados: {output_file}")
@@ -223,7 +239,7 @@ print(f"   ✓ Helper de desnormalización: {helper_file}")
 print("\n" + "=" * 70)
 print("PREPROCESAMIENTO COMPLETADO")
 print("=" * 70)
-print(f"Archivo principal: processed_data_v3.pt")
+print(f"Archivo principal: processed_data.pt")
 print(f"Normalización: Min-Max simétrica [-1, 1]")
 print(f"Rango real: [{min_torque:.0f}, {max_torque:.0f}]")
 print("=" * 70)

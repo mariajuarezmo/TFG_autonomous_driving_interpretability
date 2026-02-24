@@ -1,5 +1,5 @@
 '''
-El script mse_subida_vs_esquivas.py tiene como finalidad evaluar cuantitativamente el comportamiento del modelo PilotNet en maniobras de esquiva, 
+El script comparativa_subida_vs_esquivas.py tiene como finalidad evaluar cuantitativamente el comportamiento del modelo PilotNet en maniobras de esquiva, 
 comparando el error de predicción del torque durante:
 1.	El evento de esquiva detectado automáticamente (t_start a t_end).
 2.	Un baseline local definido como los 3 segundos previos al inicio del evento, evitando que el baseline incluya tramos de conducción con otras esquivas (contaminación del baseline).
@@ -38,7 +38,7 @@ DATASETS_DIR = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_datas
 CARSTATE_DIR = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\jsons_finales\csvs"
 TURNS_DIR    = os.path.join(CARSTATE_DIR, "_turn_analysis_out")
 
-MODEL_PTH    = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_weights.pth"
+MODEL_PTH    = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_combinado_weights.pth"
 OUT_DIR      = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\mse_out_individual"
 os.makedirs(OUT_DIR, exist_ok=True)
 

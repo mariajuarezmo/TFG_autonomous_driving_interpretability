@@ -29,9 +29,9 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 processed_data_dir = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_processed"
-DATA_FILE = "processed_data_v3.pt"
+DATA_FILE = "processed_data.pt"
 
-num_epochs = 30
+num_epochs = 40
 batch_size = 64
 learning_rate = 1e-3
 weight_decay = 1e-5
@@ -40,7 +40,7 @@ weight_decay = 1e-5
 # Definición de esquiva (TOP 10% por percentil)
 ESQUIVA_PERCENTIL = 0.90       # top 10%
 ESQUIVA_THRESHOLD = None
-ESQUIVA_LOSS_WEIGHT = 3.0     # peso adicional en la pérdida para muestras esquiva
+ESQUIVA_LOSS_WEIGHT = 5.0     # peso adicional en la pérdida para muestras esquiva
 
 # Error relativo robusto
 TORQUE_EPS = 5.0              # evita explosión del error relativo cuando real ~ 0
@@ -265,8 +265,21 @@ def calcular_metricas(preds_norm: torch.Tensor, reales_norm: torch.Tensor) -> di
         frac_esq = esquiva_mask.float().mean().item() * 100.0
     else:
         mae_esq = float("nan")
-        sign_ok_esq = float("nan")
+        sign_ok_esq = 0.0
         frac_esq = 0.0
+
+    esquiva_pos_mask = reales_t >= ESQUIVA_THRESHOLD
+    esquiva_neg_mask = reales_t <= -ESQUIVA_THRESHOLD
+
+    if esquiva_pos_mask.sum() > 0:
+        mae_esq_pos = torch.mean(torch.abs(preds_t[esquiva_pos_mask] - reales_t[esquiva_pos_mask])).item()
+    else:
+        mae_esq_pos = 0.0
+
+    if esquiva_neg_mask.sum() > 0:
+        mae_esq_neg = torch.mean(torch.abs(preds_t[esquiva_neg_mask] - reales_t[esquiva_neg_mask])).item()
+    else:
+        mae_esq_neg = 0.0
 
     return {
         "mse_norm": mse_norm,
@@ -277,10 +290,10 @@ def calcular_metricas(preds_norm: torch.Tensor, reales_norm: torch.Tensor) -> di
         "sign_ok": sign_ok,
         "mae_esquiva": mae_esq,
         "sign_ok_esquiva": sign_ok_esq,
-        "frac_esquiva_test": frac_esq
+        "frac_esquiva_test": frac_esq,
+        "mae_esquiva_pos": mae_esq_pos,
+        "mae_esquiva_neg": mae_esq_neg,
     }
-
-
 
 # DATALOADERS
 
@@ -296,7 +309,7 @@ test_loader = DataLoader(
 )
 
 optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
 
 
 
@@ -396,7 +409,9 @@ for epoch in range(num_epochs):
             f"MAE_esq: {m['mae_esquiva']:.2f} | "
             f"ER_med: {m['er_median']:.1f}% | "
             f"SignOK: {m['sign_ok']:.1f}% | "
-            f"SignOK_esq: {m['sign_ok_esquiva']:.1f}%"
+            f"SignOK_esq: {m['sign_ok_esquiva']:.1f}% | "
+            f"MAE_pos: {m['mae_esquiva_pos']:.2f} | "
+            f"MAE_neg: {m['mae_esquiva_neg']:.2f}"
         )
 
 print("-" * 70)
@@ -412,27 +427,28 @@ if best_metrics is not None:
         else:
             print(f"  {k:18s}: {v}")
 
-
+print(f"MAE esquivas positivas: {best_metrics['mae_esquiva_pos']:.2f}")
+print(f"MAE esquivas negativas: {best_metrics['mae_esquiva_neg']:.2f}")
 
 # PLOT RESUMEN 
 
-fig = plt.figure(figsize=(14, 8))
+fig = plt.figure(figsize=(18, 14))
 
-ax1 = plt.subplot(2, 2, 1)
+ax1 = plt.subplot(3, 2, 1)
 plt.plot(train_loss_hist)
 plt.xlabel("Epoch")
 plt.ylabel("Train Loss (SmoothL1 weighted)")
 plt.title("Train Loss")
 plt.grid(True, alpha=0.3)
 
-ax2 = plt.subplot(2, 2, 2)
+ax2 = plt.subplot(3, 2, 2)
 plt.plot(test_mse_hist)
 plt.xlabel("Epoch")
 plt.ylabel("Test MSE (norm)")
 plt.title("Test MSE (norm)")
 plt.grid(True, alpha=0.3)
 
-ax3 = plt.subplot(2, 2, 3)
+ax3 = plt.subplot(3, 2, 3)
 plt.plot(mae_hist, label="MAE global")
 plt.plot(mae_esq_hist, label="MAE esquivas")
 plt.xlabel("Epoch")
@@ -441,12 +457,45 @@ plt.title("MAE global vs esquivas")
 plt.legend()
 plt.grid(True, alpha=0.3)
 
-ax4 = plt.subplot(2, 2, 4)
+ax4 = plt.subplot(3, 2, 4)
 plt.plot(er_med_hist)
 plt.xlabel("Epoch")
 plt.ylabel("Error relativo (mediana) %")
 plt.title("Error relativo (mediana)")
 plt.grid(True, alpha=0.3)
+
+# Cargar mejor modelo para los scatter
+checkpoint_final = torch.load(CKPT_OUT, map_location=device)
+model.load_state_dict(checkpoint_final["model_state_dict"])
+model.eval()
+with torch.no_grad():
+    test_preds_final = model(test_images).squeeze().cpu()
+test_reales_final = test_torques.squeeze().cpu()
+test_preds_torque = denormalize(test_preds_final)
+test_reales_torque = denormalize(test_reales_final)
+test_esq_mask = torch.abs(test_reales_torque) >= ESQUIVA_THRESHOLD
+
+plt.subplot(3, 2, 5)
+plt.scatter(test_reales_torque.numpy(), test_preds_torque.numpy(), alpha=0.3, s=10)
+plt.plot([min_torque_ref, max_torque_ref], [min_torque_ref, max_torque_ref], 'r--', linewidth=2)
+plt.xlabel("Torque Real")
+plt.ylabel("Torque Predicho")
+plt.title("Predicciones vs Reales (Todos)")
+plt.grid(True, alpha=0.3)
+plt.axis('equal')
+
+plt.subplot(3, 2, 6)
+esq_r = test_reales_torque[test_esq_mask]
+esq_p = test_preds_torque[test_esq_mask]
+if len(esq_r) > 0:
+    plt.scatter(esq_r.numpy(), esq_p.numpy(), alpha=0.5, s=15, color='red')
+    lim = [min(esq_r.min(), esq_p.min()), max(esq_r.max(), esq_p.max())]
+    plt.plot(lim, lim, 'k--', linewidth=2)
+plt.xlabel("Torque Real (esquivas)")
+plt.ylabel("Torque Predicho (esquivas)")
+plt.title(f"Predicciones vs Reales (Esquivas, n={test_esq_mask.sum().item()})")
+plt.grid(True, alpha=0.3)
+plt.axis('equal')
 
 plt.tight_layout()
 plt.savefig("pilotnet_loss_modificada.png", dpi=150)

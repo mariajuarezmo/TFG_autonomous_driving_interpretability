@@ -13,13 +13,14 @@ import numpy as np
 torch.manual_seed(626)
 processed_data_dir = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_processed"
 
-DATA_FILE = "processed_data_v3.pt"
+DATA_FILE = "processed_data.pt"
 
-num_epochs = 30
+num_epochs = 40
 batch_size = 64
 learning_rate = 1e-3
 weight_decay = 1e-5
 DEBUG = False
+TORQUE_EPS = 5.0
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("=" * 70)
@@ -121,6 +122,10 @@ print(f"\n   Distribución:")
 print(f"      Positivos: {pos_count} ({pos_count/num_samples*100:.1f}%)")
 print(f"      Negativos: {neg_count} ({neg_count/num_samples*100:.1f}%)")
 
+abs_torque = torch.abs(torques_real)
+ESQUIVA_THRESHOLD = torch.quantile(abs_torque, 0.90).item()
+print(f"\n   Umbral esquivas (percentil 90): |torque| >= {ESQUIVA_THRESHOLD:.2f}°")
+
 
 # ========== DIVISIÓN TRAIN/TEST ==========
 print("\n[2/7] Dividiendo datos en Train/Test...")
@@ -216,10 +221,22 @@ def calcular_metricas(preds_norm, reales_norm):
     mae_torque = torch.mean(torch.abs(preds_torque - reales_torque)).item()
     
     # Error relativo
-    epsilon = 1e-6
-    error_rel = torch.abs(preds_torque - reales_torque) / (torch.abs(reales_torque) + epsilon)
+    den = torch.clamp(torch.abs(reales_torque), min=TORQUE_EPS)
+    error_rel = torch.abs(preds_torque - reales_torque) / den
     er_mean = (error_rel * 100).mean().item()
     er_median = (error_rel * 100).median().item()
+
+    esquiva_mask = torch.abs(reales_torque) >= ESQUIVA_THRESHOLD
+    if esquiva_mask.sum() > 0:
+        mae_esquiva = torch.abs(
+            preds_torque[esquiva_mask] - reales_torque[esquiva_mask]
+        ).mean().item()
+        porcentaje_signo_esquiva = (
+            (preds_torque[esquiva_mask] > 0) == (reales_torque[esquiva_mask] > 0)
+        ).float().mean().item() * 100
+    else:
+        mae_esquiva = 0.0
+        porcentaje_signo_esquiva = 0.0
     
     return {
         'mse_norm': mse_norm,
@@ -227,7 +244,9 @@ def calcular_metricas(preds_norm, reales_norm):
         'mae_torque': mae_torque,
         'er_mean': er_mean,
         'er_median': er_median,
-        'rmse_torque': np.sqrt(mse_torque)
+        'rmse_torque': np.sqrt(mse_torque),
+        'mae_esquiva': mae_esquiva,
+        'porcentaje_signo_esquiva': porcentaje_signo_esquiva
     }
 
 
@@ -249,7 +268,7 @@ test_loader = DataLoader(
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode='min', factor=0.5, patience=5
+    optimizer, mode='min', factor=0.5, patience=10
 )
 
 print(f"   ✓ Configuración lista")
@@ -263,7 +282,7 @@ train_losses_norm = []
 test_losses_norm = []
 train_metrics_history = []
 test_metrics_history = []
-best_test_er = float('inf')
+best_test_er_median = float('inf')
 best_epoch = 0
 
 for epoch in range(num_epochs):
@@ -320,8 +339,8 @@ for epoch in range(num_epochs):
     scheduler.step(test_loss_norm)
     
     # Mejor modelo
-    if test_metrics['er_mean'] < best_test_er:
-        best_test_er = test_metrics['er_mean']
+    if test_metrics['er_median'] < best_test_er_median:
+        best_test_er_median = test_metrics['er_median']
         best_epoch = epoch + 1
         torch.save({
             'epoch': epoch,
@@ -330,7 +349,7 @@ for epoch in range(num_epochs):
             'normalization_params': normalization_params,
             'max_torque_ref': max_torque_ref,
             'min_torque_ref': min_torque_ref,
-            'test_er': best_test_er,
+            'test_er_median': best_test_er_median,
             'data_file': DATA_FILE
         }, "pilotnet_weights.pth")
     
@@ -339,10 +358,10 @@ for epoch in range(num_epochs):
         print(f"Epoch {epoch+1:3d}/{num_epochs} | "
               f"Loss: {test_loss_norm:.6f} | "
               f"MAE: {test_metrics['mae_torque']:6.2f}° | "
-              f"ER: {test_metrics['er_mean']:5.1f}%")
+              f"ER_median: {test_metrics['er_median']:5.1f}%")
 
 print("-" * 70)
-print(f"✓ Mejor modelo en época {best_epoch} con ER = {best_test_er:.2f}%")
+print(f"✓ Mejor modelo en época {best_epoch} con ER = {best_test_er_median:.2f}%")
 
 
 # ========== ANÁLISIS FINAL ==========
@@ -357,6 +376,8 @@ with torch.no_grad():
     test_reales = test_torques.squeeze()
 
 final_metrics = calcular_metricas(test_preds, test_reales)
+print(f"MAE esquivas:   {final_metrics['mae_esquiva']:.2f}°")
+print(f"Signo esquivas: {final_metrics['porcentaje_signo_esquiva']:.1f}%")
 
 test_preds_torque = denormalize(test_preds.cpu(), max_torque_ref)
 test_reales_torque = denormalize(test_reales.cpu(), max_torque_ref)
@@ -378,10 +399,10 @@ print("=" * 70)
 # ========== VISUALIZACIÓN ==========
 print("\n[7/7] Generando visualizaciones...")
 
-fig = plt.figure(figsize=(16, 12))
+fig = plt.figure(figsize=(20, 12))
 
 # 1. Loss
-ax1 = plt.subplot(2, 3, 1)
+ax1 = plt.subplot(2, 4, 1)
 plt.plot(train_losses_norm, label="Train")
 plt.plot(test_losses_norm, label="Test")
 plt.xlabel("Epoch")
@@ -391,7 +412,7 @@ plt.legend()
 plt.grid(True, alpha=0.3)
 
 # 2. MAE
-ax2 = plt.subplot(2, 3, 2)
+ax2 = plt.subplot(2, 4, 2)
 mae_train = [m['mae_torque'] for m in train_metrics_history]
 mae_test = [m['mae_torque'] for m in test_metrics_history]
 plt.plot(mae_train, label="Train")
@@ -402,20 +423,20 @@ plt.title("Mean Absolute Error")
 plt.legend()
 plt.grid(True, alpha=0.3)
 
-# 3. Error Relativo
-ax3 = plt.subplot(2, 3, 3)
-er_train = [m['er_mean'] for m in train_metrics_history]
-er_test = [m['er_mean'] for m in test_metrics_history]
+# 3. Error Relativo Mediana
+ax3 = plt.subplot(2, 4, 3)
+er_train = [m['er_median'] for m in train_metrics_history]
+er_test = [m['er_median'] for m in test_metrics_history]
 plt.plot(er_train, label="Train")
 plt.plot(er_test, label="Test")
 plt.xlabel("Epoch")
-plt.ylabel("Error Relativo (%)")
-plt.title("Error Relativo (Métrica Principal)")
+plt.ylabel("Error Relativo Mediana (%)")
+plt.title("Error Relativo Mediana (Métrica Principal)")
 plt.legend()
 plt.grid(True, alpha=0.3)
 
 # 4. Scatter
-ax4 = plt.subplot(2, 3, 4)
+ax4 = plt.subplot(2, 4, 4)
 plt.scatter(test_reales_torque.numpy(), test_preds_torque.numpy(), alpha=0.3, s=10)
 plt.plot([min_torque_ref, max_torque_ref], [min_torque_ref, max_torque_ref], 'r--', linewidth=2)
 plt.xlabel("Torque Real")
@@ -424,8 +445,24 @@ plt.title("Predicciones vs Reales")
 plt.grid(True, alpha=0.3)
 plt.axis('equal')
 
-# 5. Distribución de errores
-ax5 = plt.subplot(2, 3, 5)
+# 5. Scatter esquivas
+ax_esq = plt.subplot(2, 4, 5)
+test_esquiva_mask = torch.abs(test_reales_torque) >= ESQUIVA_THRESHOLD
+esquivas_reales = test_reales_torque[test_esquiva_mask]
+esquivas_preds  = test_preds_torque[test_esquiva_mask]
+if len(esquivas_reales) > 0:
+    plt.scatter(esquivas_reales.numpy(), esquivas_preds.numpy(), alpha=0.5, s=15, color='red')
+    min_esq = min(esquivas_reales.min(), esquivas_preds.min())
+    max_esq = max(esquivas_reales.max(), esquivas_preds.max())
+    plt.plot([min_esq, max_esq], [min_esq, max_esq], 'k--', linewidth=2)
+plt.xlabel("Torque Real (esquivas)")
+plt.ylabel("Torque Predicho (esquivas)")
+plt.title(f"Predicciones vs Reales (Esquivas, n={test_esquiva_mask.sum().item()})")
+plt.grid(True, alpha=0.3)
+plt.axis('equal')
+
+# 6. Distribución de errores
+ax5 = plt.subplot(2, 4, 6)
 errors = torch.abs(test_preds_torque - test_reales_torque)
 plt.hist(errors.numpy(), bins=50, alpha=0.7, edgecolor='black')
 plt.xlabel("Error Absoluto")
@@ -433,8 +470,8 @@ plt.ylabel("Frecuencia")
 plt.title("Distribución de Errores")
 plt.grid(True, alpha=0.3)
 
-# 6. Ejemplos
-ax6 = plt.subplot(2, 3, 6)
+# 7. Ejemplos
+ax6 = plt.subplot(2, 4, 7)
 n = min(100, len(test_reales_torque))
 x = range(n)
 plt.plot(x, test_reales_torque[:n].numpy(), 'b-', label="Real", alpha=0.7, linewidth=2)
@@ -470,6 +507,6 @@ print("\n" + "=" * 70)
 print("ENTRENAMIENTO COMPLETADO")
 print("=" * 70)
 print(f"Mejor época: {best_epoch}")
-print(f"ER final: {final_metrics['er_mean']:.2f}%")
+print(f"ER Median final: {final_metrics['er_median']:.2f}%")
 print(f"MAE final: {final_metrics['mae_torque']:.2f}°")
 print("=" * 70)
