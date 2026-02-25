@@ -42,6 +42,7 @@ datasets/
 
 #Carpetas
 videos/
-jsons_finales
+jsons_finales/
 pilotnet_datasets/
 pilotnet_processed/
+mse_out_individual/
