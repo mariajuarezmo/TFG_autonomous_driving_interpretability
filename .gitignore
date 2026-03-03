@@ -28,6 +28,9 @@ Thumbs.db
 # Logs
 *.log
 
+#zips
+*.zip
+
 # Torch / datasets / weights (ajusta según tu proyecto)
 runs/
 wandb/
