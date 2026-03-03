@@ -7,7 +7,7 @@ import numpy as np
 # ============================================================
 # CONFIGURACIÓN — ajusta estas rutas a tu caso
 # ============================================================
-RUN_NAME = "run1"  # Cambia a "run1" o "run2" según la toma
+RUN_NAME = "run4"  # Cambiar a "run1" o "run2" según la toma
 
 pilotnet_datasets_dir = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_datasets"
 csvs_dir              = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\jsons_finales\csvs"
@@ -74,7 +74,7 @@ for prefix, segs in groups.items():
 # grupos, se concatenan en el orden indicado.
 # ---------------------------------------------------------------
 RUNS_CONFIG = {
-    "run1": [0],
+    "run4": [0],
  # ambos grupos pertenecen a run3
     # Ejemplos para otros casos:
     # "run1": [0],
