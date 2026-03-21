@@ -142,10 +142,10 @@ else:
     test_idx = indices[train_size:]
     torch.save({"train_idx": train_idx, "test_idx": test_idx}, SPLIT_FILE)
 
-train_images = images_tensor[train_idx].to(device)
-train_torques = torques_tensor[train_idx].to(device)
-test_images = images_tensor[test_idx].to(device)
-test_torques = torques_tensor[test_idx].to(device)
+train_images = images_tensor[train_idx]
+train_torques = torques_tensor[train_idx]
+test_images = images_tensor[test_idx]
+test_torques = torques_tensor[test_idx]
 
 print(f"   ✓ Train: {len(train_idx)} ({len(train_idx)/num_samples*100:.1f}%)")
 print(f"   ✓ Test: {len(test_idx)} ({len(test_idx)/num_samples*100:.1f}%)")
@@ -298,12 +298,19 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
         outputs = model(imgs)
         loss = criterion(outputs, torques)
+        if torch.isnan(outputs).any() or torch.isinf(outputs).any():
+            print(f"NaN/Inf en outputs en epoch {epoch+1}")
+            break
+
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f"NaN/Inf en loss en epoch {epoch+1}")
+            break
         loss.backward()
         optimizer.step()
         
         train_loss_norm += loss.item() * imgs.size(0)
-        train_preds_all.append(outputs.detach())
-        train_reales_all.append(torques.detach())
+        train_preds_all.append(outputs.detach().cpu())
+        train_reales_all.append(torques.detach().cpu())
     
     train_loss_norm /= len(train_loader.dataset)
     train_preds_tensor = torch.cat(train_preds_all)
@@ -322,8 +329,8 @@ for epoch in range(num_epochs):
             outputs = model(imgs)
             loss = criterion(outputs, torques)
             test_loss_norm += loss.item() * imgs.size(0)
-            test_preds_all.append(outputs)
-            test_reales_all.append(torques)
+            test_preds_all.append(outputs.cpu())
+            test_reales_all.append(torques.cpu())
     
     test_loss_norm /= len(test_loader.dataset)
     test_preds_tensor = torch.cat(test_preds_all)

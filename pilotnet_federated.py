@@ -57,7 +57,7 @@ WEIGHT_DECAY = 1e-5
 # Porcentaje de cada run que se reserva para test compartido
 TEST_FRACTION = 0.20
 
-MAX_SAMPLES_PER_RUN = 6000
+MAX_SAMPLES_PER_RUN = None
 
 torch.manual_seed(626)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -403,9 +403,12 @@ for epoch in range(NUM_EPOCHS):
 centralized_test_loss = evaluate(centralized_model, test_loader)
 print(f"  Centralizado Test Loss: {centralized_test_loss:.6f}")
 
+OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ============================================================
 # GRÁFICA 1 — Training Loss vs Epoch
 # ============================================================
+print("\n[INFO] Generando grafica...")
 
 plt.figure(figsize=(12, 7))
 colors_runs = ['#4C72B0', '#DD8452', '#55A868', '#C44E52']
@@ -417,34 +420,37 @@ for i, rn in enumerate(RUN_NAMES):
 plt.plot(fed_losses, label='Modelo Federado',
          linewidth=2.5, color='#CC0000', alpha=0.9)
 
+plt.plot(centralized_losses, label='Modelo Centralizado',
+         linewidth=2.5, color='#9B59B6', alpha=0.9, linestyle='--')
+
 plt.xlabel('Epoch', fontsize=12)
 plt.ylabel('Training Loss (MSE norm)', fontsize=12)
-plt.title('Training Loss vs Epoch — Comparación todos los escenarios\n(Federated Averaging por epoch)', fontsize=13, fontweight='bold')
+plt.title('Training Loss vs Epoch — Comparacion todos los escenarios\n'
+          '(Federated Averaging por epoch)', fontsize=13, fontweight='bold')
 plt.legend(fontsize=10)
 plt.yscale('log')
 plt.grid(True, alpha=0.3)
 
-# Anotar valores finales
-for i, rn in enumerate(RUN_NAMES):
-    plt.annotate(
-        f'Modelo {i+1}: {individual_losses[rn][-1]:.4f}',
-        xy=(NUM_EPOCHS - 1, individual_losses[rn][-1]),
-        xytext=(NUM_EPOCHS * 0.6, individual_losses[rn][-1]),
-        fontsize=8,
-        bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7)
-    )
-plt.annotate(
-    f'Federado: {fed_losses[-1]:.4f}',
-    xy=(NUM_EPOCHS - 1, fed_losses[-1]),
-    xytext=(NUM_EPOCHS * 0.6, fed_losses[-1]),
-    fontsize=8,
-    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7)
-)
+# Anotaciones
+annotations = [
+    (individual_losses[rn][-1], f'Modelo {i+1}: {individual_losses[rn][-1]:.4f}')
+    for i, rn in enumerate(RUN_NAMES)
+] + [
+    (fed_losses[-1],     f'Federado: {fed_losses[-1]:.4f}'),
+    (centralized_losses[-1], f'Centralizado: {centralized_losses[-1]:.4f}'),
+]
+for yval, label in annotations:
+    plt.annotate(label,
+                 xy=(NUM_EPOCHS - 1, yval),
+                 xytext=(NUM_EPOCHS * 0.55, yval),
+                 fontsize=8,
+                 bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
 
 plt.tight_layout()
-plt.savefig("training_loss_comparison.png", dpi=150)
+out = os.path.join(OUT_DIR, "training_loss_comparison.png")
+plt.savefig(out, dpi=150)
 plt.close()
-print("\n[OK] training_loss_comparison.png guardado")
+print(f"[OK] Grafica guardada: {out}")
 
 
 # ============================================================
