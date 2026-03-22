@@ -43,7 +43,7 @@ from torch.utils.data import TensorDataset, DataLoader
 # CONFIGURACIÓN — ajusta estas rutas a tu entorno
 # ============================================================
 
-DATASET_DIR = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\Dataset"
+DATASET_DIR = r"./Dataset"
 
 # Nombres de las carpetas de cada run dentro de DATASET_DIR
 RUN_NAMES = ["run1", "run2", "run3", "run4"]
