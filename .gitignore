@@ -31,10 +31,11 @@ Thumbs.db
 #zips
 *.zip
 
-# Torch / datasets / weights (ajusta según tu proyecto)
+# Torch / datasets / weights
 runs/
 wandb/
 data/
+Dataset/
 datasets/
 *.pt
 *.pth
