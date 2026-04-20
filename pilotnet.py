@@ -154,9 +154,9 @@ print(f"   ✓ Test: {len(test_idx)} ({len(test_idx)/num_samples*100:.1f}%)")
 # ========== MODELO ==========
 print("\n[3/7] Construyendo modelo PilotNet mejorado...")
 
-class PilotNetMejorado(nn.Module):
+class PilotNet(nn.Module):
     def __init__(self):
-        super(PilotNetMejorado, self).__init__()
+        super(PilotNet, self).__init__()
         
         self.conv1 = nn.Conv2d(3, 24, kernel_size=5, stride=2)
         self.bn1 = nn.BatchNorm2d(24)
@@ -202,8 +202,8 @@ class PilotNetMejorado(nn.Module):
         
         return x
 
-model = PilotNetMejorado().to(device)
-print(f"   ✓ Parámetros: {sum(p.numel() for p in model.parameters()):,}")
+model = PilotNet().to(device)
+print(f"   Parámetros: {sum(p.numel() for p in model.parameters()):,}")
 
 
 # ========== MÉTRICAS ==========

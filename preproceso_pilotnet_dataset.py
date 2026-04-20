@@ -1,12 +1,12 @@
 # Importación de librerías necesarias
 import os
 import torch
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from torchvision import transforms
 from tqdm import tqdm
 
 
-# ========== CONFIGURACIÓN ==========
+#  CONFIGURACIÓN 
 # Carpeta raíz que contiene las subcarpetas run1, run2, run3, run4
 base_data_dir = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\Dataset"
 output_dir = r"C:\Users\maria\Escritorio\Personal\TFG\yoloVideo\pilotnet_processed"
@@ -23,7 +23,7 @@ print("Estructura: Dataset/runN/telemetry_data/ + video_data/")
 print("=" * 70)
 
 
-# ========== CARGA DE RUTAS Y TORQUES ==========
+#  CARGA DE RUTAS Y TORQUES 
 all_images = []
 all_torques = []
 
@@ -33,20 +33,20 @@ for run_name in run_folders:
     run_path = os.path.join(base_data_dir, run_name)
 
     if not os.path.isdir(run_path):
-        print(f"   ⚠ Carpeta no encontrada, omitiendo: {run_path}")
+        print(f"    Carpeta no encontrada, omitiendo: {run_path}")
         continue
 
     # Rutas internas
     telemetry_dir = os.path.join(run_path, "telemetry_data")
-    video_dir     = os.path.join(run_path, "video_data")
+    video_dir     = os.path.join(run_path, "video_data", "frame_videos")
     frame_torque_txt = os.path.join(telemetry_dir, "frame-torque.txt")
 
     if not os.path.exists(frame_torque_txt):
-        print(f"   ⚠ No se encontró frame-torque.txt en {telemetry_dir}, omitiendo {run_name}")
+        print(f"    No se encontró frame-torque.txt en {telemetry_dir}, omitiendo {run_name}")
         continue
 
     if not os.path.isdir(video_dir):
-        print(f"   ⚠ No se encontró la carpeta video_data en {run_path}, omitiendo {run_name}")
+        print(f"    No se encontró la carpeta video_data en {run_path}, omitiendo {run_name}")
         continue
 
     count_before = len(all_images)
@@ -75,7 +75,7 @@ if len(all_images) == 0:
     exit(1)
 
 
-# ========== ANÁLISIS DE DISTRIBUCIÓN DE TORQUES ==========
+#  ANÁLISIS DE DISTRIBUCIÓN DE TORQUES 
 print("\n[2/4] Analizando distribución de torques...")
 torques_tensor = torch.tensor(all_torques, dtype=torch.float32)
 
@@ -117,7 +117,7 @@ print(f"   Negativos (izq):     {num_negativos:6d} ({num_negativos/len(all_torqu
 print(f"   Ceros (recto):       {num_ceros:6d} ({num_ceros/len(all_torques)*100:.1f}%)")
 
 
-# ========== NORMALIZACIÓN ==========
+#  NORMALIZACIÓN 
 print("\n[3/4] Normalizando torques")
 
 # Normalización Min-Max a [-1, 1] (SIMÉTRICA)
@@ -143,7 +143,7 @@ print(f"   Negativos normalizados: min = {torques_normalized[torques_tensor < 0]
 print(f"   Balance: {abs(torques_normalized.max() + torques_normalized.min()):.6f} (debe ser ≈0)")
 
 
-# ========== PROCESAMIENTO DE IMÁGENES ==========
+# PROCESAMIENTO DE IMÁGENES
 print("\n[4/4] Procesando imágenes...")
 
 transform = transforms.Compose([
@@ -152,19 +152,29 @@ transform = transforms.Compose([
 ])
 
 images_tensor = []
+valid_torques = [] # Nueva lista para guardar solo torques de imágenes válidas
 
-for img_path in tqdm(all_images, desc="   Procesando"):
-    img = Image.open(img_path).convert('RGB')
-    img = transform(img)
-    images_tensor.append(img)
+for i, img_path in enumerate(tqdm(all_images, desc="   Procesando")):
+    try:
+        img = Image.open(img_path).convert('RGB')
+        img = transform(img)
+        images_tensor.append(img)
+        # Solo si la imagen se carga bien, guardamos su torque correspondiente
+        valid_torques.append(torques_normalized[i])
+        
+    except (UnidentifiedImageError, OSError) as e:
+        print(f"\n    Saltando imagen dañada: {img_path}")
+        continue
 
+# Convertimos las listas finales en tensores
 images_tensor = torch.stack(images_tensor)
+torques_normalized = torch.stack(valid_torques)
 
-print(f"\n   ✓ Tensor de imágenes: {images_tensor.shape}")
-print(f"   ✓ Tensor de torques: {torques_normalized.shape}")
+print(f"\n   ✓ Proceso finalizado.")
+print(f"   ✓ Imágenes válidas: {len(images_tensor)}")
+print(f"   ✓ Tensor de imágenes: {images_tensor.shape}")
 
-
-# ========== GUARDAR DATOS PROCESADOS ==========
+# GUARDAR DATOS PROCESADOS
 print("\n[5/5] Guardando datos procesados...")
 
 data_to_save = {
@@ -188,9 +198,9 @@ print(f"\n Datos guardados: {output_file}")
 print(f" Tamaño: {os.path.getsize(output_file) / (1024**2):.2f} MB")
 
 # Guardar información de configuración
-config_file = os.path.join(output_dir, "preprocessing_config_v3.txt")
+config_file = os.path.join(output_dir, "preprocessing_config_centraliced.txt")
 with open(config_file, "w") as f:
-    f.write("CONFIGURACIÓN DEL PREPROCESAMIENTO (VERSIÓN COMBINADA - TODOS LOS RUNS)\n")
+    f.write("CONFIGURACIÓN DEL PREPROCESAMIENTO\n")
     f.write("=" * 70 + "\n\n")
     f.write(f"Directorio origen: {base_data_dir}\n")
     f.write(f"Runs incluidos: {', '.join(run_folders)}\n")
@@ -218,48 +228,7 @@ with open(config_file, "w") as f:
     f.write("  Desnormalización:\n")
     f.write(f"    real = (norm + 1) * {range_torque:.2f} / 2 + {min_torque:.2f}\n\n")
 
-    f.write("ESTRUCTURA DE CARPETAS USADA:\n")
-    f.write("  Dataset/\n")
-    f.write("    runN/\n")
-    f.write("      telemetry_data/\n")
-    f.write("        frame-torque.txt   <- asocia frame con torque\n")
-    f.write("        telemetry.csv      <- telemetría completa\n")
-    f.write("      video_data/\n")
-    f.write("        <frames>           <- imágenes del vídeo\n")
-
 print(f" Configuración guardada: {config_file}")
-
-# Crear función helper para desnormalizar
-helper_file = os.path.join(output_dir, "denormalize_helper.py")
-with open(helper_file, "w") as f:
-    f.write("# Helper para desnormalizar predicciones\n")
-    f.write("import torch\n\n")
-    f.write(f"MIN_TORQUE = {min_torque}\n")
-    f.write(f"MAX_TORQUE = {max_torque}\n")
-    f.write(f"RANGE_TORQUE = {range_torque}\n\n")
-    f.write("def denormalize(normalized_torque):\n")
-    f.write('    """\n')
-    f.write('    Convierte torque normalizado [-1, 1] a grados reales.\n')
-    f.write('    Args:\n')
-    f.write('        normalized_torque: Tensor o valor en rango [-1, 1]\n')
-    f.write('    Returns:\n')
-    f.write('        Torque en grados\n')
-    f.write('    """\n')
-    f.write(f"    return (normalized_torque + 1) * {range_torque} / 2 + {min_torque}\n\n")
-    f.write("def normalize(real_torque):\n")
-    f.write('    """\n')
-    f.write('    Convierte torque en grados a normalizado [-1, 1].\n')
-    f.write('    Args:\n')
-    f.write('        real_torque: Torque en grados\n')
-    f.write('    Returns:\n')
-    f.write('        Torque normalizado [-1, 1]\n')
-    f.write('    """\n')
-    f.write(f"    return 2 * (real_torque - {min_torque}) / {range_torque} - 1\n\n")
-    f.write("# Ejemplo de uso:\n")
-    f.write("# pred_norm = model(image)  # Output: valor en [-1, 1]\n")
-    f.write("# pred_grados = denormalize(pred_norm)\n")
-
-print(f"   ✓ Helper de desnormalización: {helper_file}")
 
 print("\n" + "=" * 70)
 print("PREPROCESAMIENTO COMPLETADO")

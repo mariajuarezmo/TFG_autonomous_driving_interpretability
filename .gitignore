@@ -36,6 +36,7 @@ runs/
 wandb/
 data/
 Dataset/
+Dataset_Filtrado/
 datasets/
 *.pt
 *.pth
@@ -68,3 +69,5 @@ pilotnet_processed_1/
 pilotnet_processed_2/
 pilotnet_processed_3/
 pilotnet_processed_4/
+LORCA/
+Pipeline GitHub/
